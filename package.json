@@ -1,0 +1,7 @@
+{
+  "name": "caesium-image-compressor",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Caesium Image Compressor desktop and CLI packaging workspace",
+  "license": "GPL-3.0-only"
+}

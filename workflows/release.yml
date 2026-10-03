@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    #   branches:
+    #     - 'main'
+    tags: [ "v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-*" ]
+  workflow_dispatch:
+  repository_dispatch:
+    types: [ webhook ]
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          body: |
+            ## Downloads
+
+            | Platform | Architecture | Filename |
+            |:--|:--:|:--|
+            | macOS | ARM64 | [caesiumclt-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/caesiumclt-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz) |
+            | macOS | x86_64 | [caesiumclt-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/caesiumclt-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz) |
+            | Linux | ARM64 | [caesiumclt-${{ github.ref_name }}-aarch64-unknown-linux-musl.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/caesiumclt-${{ github.ref_name }}-aarch64-unknown-linux-musl.tar.gz) |
+            | Linux | x86_64 | [caesiumclt-${{ github.ref_name }}-x86_64-unknown-linux-musl.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/caesiumclt-${{ github.ref_name }}-x86_64-unknown-linux-musl.tar.gz) |
+            | Windows | x86_64 | [caesiumclt-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/caesiumclt-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip) |
+
+  build-and-upload:
+    name: Build and upload
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        # You can add more, for any target you'd like!
+        include:
+          - build: linux x86
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - build: linux arm64
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+
+          - build: macos x86
+            os: macos-latest
+            target: x86_64-apple-darwin
+          - build: macos arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+
+          - build: win x86
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          # - build: win arm64
+          #   os: windows-latest
+          #   target: aarch64-pc-windows-msvc
+          # error: failed to run custom build command for `mozjpeg-sys v*`
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      - name: Install Rust
+        # Or @nightly if you want
+        uses: dtolnay/rust-toolchain@stable
+        # Arguments to pass in
+        with:
+          # Make Rust compile to our target (defined in the matrix)
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        uses: clechasseur/rs-cargo@v2
+        with:
+          use-cross: true
+          command: build
+          args: --verbose --release --target ${{ matrix.target }}
+
+      - name: Build archive
+        shell: bash
+        run: |
+          # Replace with the name of your binary
+          binary_name="caesiumclt"
+
+          dirname="$binary_name-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir "$dirname"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            mv "target/${{ matrix.target }}/release/$binary_name.exe" "$dirname"
+          else
+            mv "target/${{ matrix.target }}/release/$binary_name" "$dirname"
+          fi
+
+          # Include license and readme in the archive
+          if [ -f LICENSE.md ]; then cp LICENSE.md "$dirname/"; fi
+          if [ -f README.md ]; then cp README.md "$dirname/"; fi
+
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            7z a "$dirname.zip" "$dirname"
+            echo "ASSET=$dirname.zip" >> $GITHUB_ENV
+          else
+            tar -czf "$dirname.tar.gz" "$dirname"
+            echo "ASSET=$dirname.tar.gz" >> $GITHUB_ENV
+          fi
+
+      # Create/update the GitHub Release with a user PAT (so release event triggers)
+      # https://github.com/softprops/action-gh-release
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          files: |
+            ${{ env.ASSET }}
+
+      - name: Upload Artifact 🚀
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ASSET }}
+          path: ${{ env.ASSET }}
+
